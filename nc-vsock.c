@@ -54,6 +54,54 @@ static int parse_port(const char *port_str)
 	}
 }
 
+static int sock_listen(const char *port_str)
+{
+	int listen_fd;
+	int client_fd;
+	struct sockaddr_in sa_listen = {
+		.sin_family = AF_INET,
+	};
+	struct sockaddr_in sa_client;
+	socklen_t socklen_client = sizeof(sa_client);
+	int port = parse_port(port_str);
+	if (port < 0) {
+		return -1;
+	}
+
+	sa_listen.sin_addr.s_addr=htonl(INADDR_ANY);
+	sa_listen.sin_port=htons(port);
+
+	listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (listen_fd < 0) {
+		perror("socket");
+		return -1;
+	}
+
+	if (bind(listen_fd, (struct sockaddr*)&sa_listen, sizeof(sa_listen)) != 0) {
+		perror("bind");
+		close(listen_fd);
+		return -1;
+	}
+
+	if (listen(listen_fd, 1) != 0) {
+		perror("listen");
+		close(listen_fd);
+		return -1;
+	}
+
+	client_fd = accept(listen_fd, (struct sockaddr*)&sa_client, &socklen_client);
+	if (client_fd < 0) {
+		perror("accept");
+		close(listen_fd);
+		return -1;
+	}
+
+	fprintf(stderr, "Connection from port %u...\n", ntohs(sa_client.sin_port));
+
+	close(listen_fd);
+	return client_fd;
+}
+
 static int vsock_listen(const char *port_str)
 {
 	int listen_fd;
@@ -177,15 +225,34 @@ static int vsock_connect(const char *cid_str, const char *port_str)
 
 static int get_remote_fd(int argc, char **argv)
 {
-	if (argc >= 3 && strcmp(argv[1], "-l") == 0) {
-		int remote_fd = vsock_listen(argv[2]);
+	if (argc >= 3)
+	{
+		int remote_fd = -1;
+
+		if (strcmp(argv[1], "-l") == 0)
+		{
+			remote_fd = vsock_listen(argv[2]);
+		}
+		else if (strcmp(argv[1], "-s") == 0 )
+		{
+			remote_fd = sock_listen(argv[2]);
+		}
 
 		if (remote_fd < 0) {
 			return -1;
 		}
+		if (argc == 6)
+		{
+			int fd = -1;
 
-		if (argc == 6 && strcmp(argv[3], "-t") == 0) {
-			int fd = tcp_connect(argv[4], argv[5]);
+			if (strcmp(argv[3], "-t") == 0)
+			{
+				fd = tcp_connect(argv[4], argv[5]);
+			}
+			else if (strcmp(argv[3], "-c") == 0)
+			{
+				fd = vsock_connect(argv[4], argv[5]);
+			}
 			if (fd < 0) {
 				return -1;
 			}
@@ -202,7 +269,7 @@ static int get_remote_fd(int argc, char **argv)
 	} else if (argc == 3) {
 		return vsock_connect(argv[1], argv[2]);
 	} else {
-		fprintf(stderr, "usage: %s [-l <port> [-t <dst> <dstport>] | <cid> <port>]\n", argv[0]);
+		fprintf(stderr, "usage: %s [-l <port> [-t <dst> <dstport>] | -s <port> [-c <cid> <dstport>] | <cid> <port>]\n", argv[0]);
 		return -1;
 	}
 }
